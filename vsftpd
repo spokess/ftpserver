@@ -1,0 +1,253 @@
+
+# Centos7.6搭建FTP服务器
+
+搭建环境：Centos7.6版本、生产服务器、计划默认端口6000、被动模式端口6001-6005
+
+## 一、关闭防火墙
+
+<font color='red'>为了避免不必要的麻烦，我们先关闭防火墙，等搭建成功之后再开启防火墙和相应的端口。</font>
+
+```bash
+systemctl status firewalld.service  #查看防火墙状态
+systemctl stop firewalld.service   #停止防火墙服务
+systemctl disable firewalld.service #关闭防火墙开启自启动
+vi /etc/selinux/config   #把文件中的SELINUX=enforcing 改为SELINUX=disabled
+```
+
+## 二、安装vsftpd
+
+1、安装vsftpd
+
+```bash
+yum install -y vsftpd
+```
+
+版本： vsftpd.x86_64.0.3.0.2-22.el7
+
+2、启动服务
+
+```bash
+systemctl start vsftpd.service 启动服务
+systemctl enable vsftpd.service 设置开机自动启动服务
+```
+
+## 三、编辑配置
+
+`vi /etc/vsftpd/vsftpd.conf`  #编辑配置文件
+
+```bash
+anonymous_enable=NO       #是否开启匿名用户，匿名都不安全，不要开
+local_enable=YES          #允许本机账号登录FTP
+write_enable=YES          #允许账号都有写操作
+local_umask=022           #意思是指：文件目录权限：777-022=755，文件权限：666-022=644，这有点反人类了，并且没有人跟我说是减去的。注意理解！
+dirmessage_enable=YES     #进入某个目录的时候，是否在客户端提示一下
+xferlog_enable=YES        #日志记录
+connect_from_port_20=YES  #开放port模式的20端口的连接
+xferlog_std_format=YES    #日志成为std格式
+chroot_local_user=YES     #限制用户只能在自己的目录活动
+chroot_list_file=/etc/vsftpd/chroot_list
+ls_recurse_enable=NO      #是否允许使用ls -R等命令
+listen=YES                #监听ipv4端口，开了这个就说明vsftpd可以独立运行，不用依赖其他服务
+pam_service_name=vsftpd   #pam模块的名称，放置在 /etc/pam.d/vsftpd ，认证用
+userlist_enable=YES       #使用允许登录的名单
+userlist_deny=NO          #限制允许登录的名单，前提是userlist_enable=YES，其实这里有点怪~！
+allow_writeable_chroot=YES     #允许限制在自己的目录活动的用户 拥有写权限
+tcp_wrappers=YES               #Tcp wrappers ： Transmission Control Protocol (TCP) Wrappers 为由 inetd 生成的服务提供了增强的安全性。
+pasv_min_port=6001             #被动模式起始端口，0为随机分配
+pasv_max_port=6005             #被动模式结束端口，0为随机分配
+user_config_dir=/etc/vsftpd/userconfig    #主目录配置，修改后到这个目录中在修改用户配置
+```
+
+**纯净版配置文件：**
+
+```
+anonymous_enable=NO
+local_enable=YES
+write_enable=YES
+local_umask=022
+dirmessage_enable=YES
+xferlog_enable=YES
+connect_from_port_20=YES
+xferlog_std_format=YES
+chroot_local_user=YES
+chroot_list_file=/etc/vsftpd/chroot_list
+ls_recurse_enable=NO
+listen=YES
+pam_service_name=vsftpd
+userlist_enable=YES
+userlist_deny=NO
+allow_writeable_chroot=YES
+tcp_wrappers=YES
+pasv_min_port=6001
+pasv_max_port=6005
+user_config_dir=/etc/vsftpd/userconfig
+```
+
+修改完之后需要重启FTP服务刷新配置：
+
+```bash
+systemctl start vsftpd.service   #重启FTP服务
+```
+
+<font color='red'>建议：把默认21端口，最好和pasv端口改成连续的。</font>
+
+> 例如：FTP的默认监听端口为6000，pasv端口范围改为6001-6005 (5个就够了)那么这样架设到公网的话，只需要在路由器里面端口映射一条就好了，一般的路由器端口映射的数量是有限制的。要不然你最少要设置两条。高端路由器可以不连续的设置一条。我这边是公司60条已经全部占满了，所以得省着点用。
+
+## 四、新建用户并设置密码
+
+**1、新建用户：helloftp** 
+
+我们如果直接使用`useradd -d helloftp`新建的用户是可以登录系统的。这样会给FTP服务器带来安全隐患。因此我们必须不能让FTP用户登录系统。为ftp用户统一创建一个不能登录系统的shell，这一行的命令只运行一次即可，后面新建用户就不需要执行了
+
+```bash
+echo /usr/bin/nologin>>/etc/shells
+```
+注意这里的bin  **<font color='red'>不是sbin</font>**
+
+**创建用户**
+ 
+```bash
+useradd -d /home/ftp_data/helloftp -m -s /usr/bin/nologin helloftp 
+```
+
+- 指定用户主目录`/home/ftp_data/helloftp -m`
+- 指定用户的shell： `-s /usr/bin/nologin`
+ 
+
+> 需要注意的是，如果公司有员工离职，需要删除其账号。那么我建议你先把该用户内的资料先转移其他目录，再对用户进行删除操作，方式数据丢失。
+
+**2、设置用户helloftp密码**
+
+```bash
+passwd helloftp
+```
+
+## 五、允许新建用户登录FTP
+
+```bash
+vi /etc/vsftpd/user_list
+```
+
+编辑/etc/vsftpd/user_list ，这个是允许登录ftp的名单。一行一个用户，不能把多个写到一行。
+
+到了这一步，FTP其实就可以登录了。
+
+> <font
+> color='red'>但是有个非常大的缺点就是，我们没有给用户指定主目录，这样的话默认每个用户的主目录都在自己的家目录。也就是说每个用户的主目录都是在不同目录中，这样的状况会给我们后期数据备份带来不便。所以我们必须想办法把用户主目录集中管理，最好能放到一个目录里面。</font>
+
+## 六、自定义用户主目录
+如果你在上面没有指定用户的目录，建议继续往下看。
+
+在这里我们准备把用户主目集中放到/home/data/ftp下集中管理。之前我们在`/etc/vsftpd/vsftpd.conf`配置文件中写了这么一行：`user_config_dir=/etc/vsftpd/userconfig` ，<font color='red'>那么这一行的作用是什么呢？</font>就是定义用户的主目录。userconfig默认是没有的，必须新建。然后我们可以把，给每个用户定义的主目录配置文件放到这个目录里面下。就可以实现自定义主目录。
+
+**1、新建主目录配置**
+
+```bash
+mkdir /etc/vsftpd/userconfig
+vim /etc/vsftpd/userconfig/helloftp    #新建主目录配置文件helloftp，配置文件名字必须要和用户名相同
+ 
+helloftp文件中写入下面一行保存：
+local_root=/home/ftp_data/helloftp
+```
+
+==注意：配置文件名字必须要和用户名相同。==
+
+**2、给用户新建主目录并授权**
+
+```bash
+mkdir -p /home/ftp_data/helloftp
+chmod -R 777 /home/ftp_data/helloftp
+```
+
+## 七、防火墙配置
+
+我们的监听端口是6000，被动模式端口范围是6001-6005
+
+```bash
+firewall-cmd --version   #查看防火墙版本
+0.6.3
+firewall-cmd --zone=public --add-port=6000-6005/tcp --permanent  #开启6000-6005 tcp端口
+success
+firewall-cmd --reload  #刷新，重新载入
+success
+firewall-cmd --zone=public --query-port=6000-6005/tcp  #检测端口是否开启
+yes
+```
+
+**至此搭建成功。**
+
+
+
+## 八、注意事项
+
+1、设置了 chroot_local_user=YES 后，用户不能登录，原因是没设置 allow_writeable_chroot=YES
+
+2、重启服务器后无法连接FTP，原因是你防火墙没有关闭彻底。
+
+3、不建议把用户主目录放在根目录，建议放到home目录。
+
+4、如果你要架设到公网，端口映射的时候要把默认端口和pasv端口一起映射，单纯映射默认端口是访问不到的。
+
+5、下面附vsftpd.conf配置文件的详细解析：
+
+```bash
+anonymous_enable=NO            #是否开启匿名用户，匿名都不安全，不要开
+local_enable=YES               #允许本机账号登录FTP
+write_enable=YES               #允许账号都有写操作
+local_umask=022                #意思是指：文件目录权限：777-022=755，文件权限：666-022=644，这有点反人类了，并且没有人跟我说是减去的。注意理解！
+#anon_upload_enable=YES        #匿名用户是否有上传文件的功能，不要开
+#anon_mkdir_write_enable=YES   #匿名用户是否有创建文件夹的功能，不要开
+dirmessage_enable=YES          #进入某个目录的时候，是否在客户端提示一下
+xferlog_enable=YES             #日志记录
+connect_from_port_20=YES       #开放port模式的20端口的连接
+#chown_uploads=YES             #允许没人认领的文件上传的时候，更改掉所属用chown_uploads=YES的前提下，所属的用户
+#xferlog_file=/var/log/xferlog #日志存放的地方
+xferlog_std_format=YES         #日志成为std格式
+#idle_session_timeout=600      #用户无操作服务器会主动断开连接，单位秒
+#data_connection_timeout=120   #数据连接超时
+#nopriv_user=ftpsecure         #以 ftpsecure 作为此一服务执行者的权限。因为ftpsecure 的权限相当的低，因此即使被入侵，入侵者仅能取得nobody 的权限喔！
+#async_abor_enable=YES         #异步停用，由客户发起
+#ascii_upload_enable=YES       #使用ascii格式上传文件
+#ascii_download_enable=YES     #使用ascii格式下载文件
+#ftpd_banner=Welcome to blah FTP service  #欢迎词
+#deny_email_enable=YES         #以anonymous用户登录时候，是否禁止掉名单中的emaill密码。
+#banned_email_file=/etc/vsftpd/banned_emails  #以anonymous用户登录时候，所禁止emaill密码名单。
+chroot_local_user=YES          #限制用户只能在自己的目录活动
+#chroot_list_enable=YES        #例外名单，如果是YES的话，这个有点怪，不懂别乱开，上面的选项会跟这个名单反调（会被上面的选项影响）。
+#chroot_list_file=/etc/vsftpd/chroot_list
+ls_recurse_enable=NO           #是否允许使用ls -R等命令
+listen=YES                     #监听ipv4端口，开了这个就说明vsftpd可以独立运行，不用依赖其他服务。
+#listen_ipv6=YES               #监听ipv6端口，还没普及呢！
+pam_service_name=vsftpd        #pam模块的名称，放置在 /etc/pam.d/vsftpd ，认证用
+userlist_enable=YES            #使用允许登录的名单
+userlist_deny=NO               #限制允许登录的名单，前提是userlist_enable=YES，其实这里有点怪~！
+allow_writeable_chroot=YES     #允许限制在自己的目录活动的用户 拥有写权限
+tcp_wrappers=YES               #Tcp wrappers ： Transmission Control Protocol (TCP) Wrappers 为由 inetd 生成的服务提供了增强的安全性。
+user_config_dir=/etc/vsftpd/userconfig  #主目录配置，修改后到这个目录中在修改用户配置
+ 
+pasv_min_port=6000 （0为随机分配）
+pasv_max_port=6010（这两项定义了可以同时执行下载链接的数量。）
+#被动模式端口范围：注意：linux客户端默认使用被动模式，windows 客户端默认使用主动模式。在ftp客户端中执行"passive"来切换数据通道的模式。也可以使用"ftp -A ip"直接使用主动模式。主动模式、被动模式是有客户端来指定的。
+```
+
+## 九、创建用户脚本脚本
+
+```bash
+#bin/bash
+
+read -p 请输入要新建的用户名: xinuser
+
+#判断是否为空或名称重复
+
+id $xinuser &>/dev/null
+if [ $? -ne 0 ]
+	then
+        useradd -d /home/ftp_data/$xinuser -m -s /usr/bin/nologin $xinuser
+		echo $xinsuer >>  /etc/vsftpd/user_list
+		echo "用户$xinuser成功创建"
+		passwd $xinuser
+	else
+		echo "用户$xinuser已存在或者输入用户名错误，程序已终止"
+		exit
+fi	
+```
