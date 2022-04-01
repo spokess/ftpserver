@@ -1,0 +1,2 @@
+# ftpserver
+利用centos7和vsftpd部署ftpserver的教程
